@@ -1,7 +1,0 @@
-/workspaces/http_server_c/build/CMakeFiles/server.dir
-/workspaces/http_server_c/build/CMakeFiles/edit_cache.dir
-/workspaces/http_server_c/build/CMakeFiles/rebuild_cache.dir
-/workspaces/http_server_c/build/CMakeFiles/list_install_components.dir
-/workspaces/http_server_c/build/CMakeFiles/install.dir
-/workspaces/http_server_c/build/CMakeFiles/install/local.dir
-/workspaces/http_server_c/build/CMakeFiles/install/strip.dir
