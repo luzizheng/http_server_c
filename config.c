@@ -38,13 +38,17 @@ static char* trim_whitespace(char *str) {
 }
 
 // 解析键值对
+#include "logMgr.h"
+#define APP_ID "SRV"
 static void parse_key_value(const char *line, char *section, 
                            HttpServerConfig *http, FtpServerConfig *ftp) {
     char key[128], value[256];
     char *equal_sign = strchr(line, '=');
     
+
     // 不包含等号，不是有效的键值对
     if (equal_sign == NULL) {
+        dlt_log_debug(APP_ID, "Line is not a key-value pair: %s", line);
         return;
     }
     
@@ -65,6 +69,7 @@ static void parse_key_value(const char *line, char *section,
     
     // 根据当前section解析配置
     if (strcmp(section, "http_server") == 0) {
+        dlt_log_debug(APP_ID, "[http_server] %s = %s", key, value);
         if (strcmp(key, "ip") == 0) {
             strncpy(http->ip, value, sizeof(http->ip) - 1);
         } else if (strcmp(key, "port") == 0) {
@@ -75,6 +80,7 @@ static void parse_key_value(const char *line, char *section,
             http->max_connections = atoi(value);
         }
     } else if (strcmp(section, "ftp_server") == 0) {
+        dlt_log_debug(APP_ID, "[ftp_server] %s = %s", key, value);
         if (strcmp(key, "ip") == 0) {
             strncpy(ftp->ip, value, sizeof(ftp->ip) - 1);
         } else if (strcmp(key, "port") == 0) {
@@ -116,21 +122,24 @@ void config_init(ServerConfig *config) {
 // 从文件加载配置
 int config_load(ServerConfig *config, const char *filename) {
     if (config == NULL || filename == NULL) {
+        dlt_log_error(APP_ID, "config_load: config or filename is NULL");
         return -1;
     }
-    
+
     // 先初始化默认配置
     config_init(config);
-    
+    dlt_log_debug(APP_ID, "Default configuration initialized");
+
     // 打开配置文件
     FILE *file = fopen(filename, "r");
     if (file == NULL) {
+        dlt_log_warn(APP_ID, "config_load: failed to open file %s", filename);
         return -2; // 文件打开失败
     }
-    
+
     char line[512];
     char current_section[64] = "";
-    
+
     // 逐行读取并解析
     while (fgets(line, sizeof(line), file) != NULL) {
         // 去除换行符
@@ -138,21 +147,21 @@ int config_load(ServerConfig *config, const char *filename) {
         if (newline != NULL) {
             *newline = '\0';
         }
-        
+
         // 处理注释
         char *comment = strchr(line, '#');
         if (comment != NULL) {
             *comment = '\0';
         }
-        
+
         // 去除首尾空白
         trim_whitespace(line);
-        
+
         // 空行跳过
         if (line[0] == '\0') {
             continue;
         }
-        
+
         // 处理section
         if (line[0] == '[' && line[strlen(line) - 1] == ']') {
             // 提取section名称
@@ -160,15 +169,17 @@ int config_load(ServerConfig *config, const char *filename) {
             if (section_len < sizeof(current_section) - 1) {
                 strncpy(current_section, line + 1, section_len);
                 current_section[section_len] = '\0';
+                dlt_log_debug(APP_ID, "Switching to section [%s]", current_section);
             }
             continue;
         }
-        
+
         // 解析键值对
         parse_key_value(line, current_section, &config->http, &config->ftp);
     }
-    
+
     fclose(file);
+    dlt_log_debug(APP_ID, "Configuration loaded from file: %s", filename);
     return 0; // 成功
 }
 
