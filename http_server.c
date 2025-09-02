@@ -13,69 +13,20 @@
 #include <errno.h>
 #include <ctype.h>
 #include <pthread.h>
+
+#include "config.h"
 #include "server.h"
 #include "http_server.h"
+#include "utils.h"
 
-#define HTTP_PORT 8081
+
 #define BUFFER_SIZE 4096
-#define ROOT_DIR "/tmp/httproot"
 #define MAX_PATH 4096
 
 // 全局变量，保存HTTP服务器socket
 static int http_server_fd = -1;
 
-// 安全拼接路径的工具函数
-static int safe_path_join(char *dest, size_t dest_size, const char *path1, 
-                         const char *path2, const char *separator) {
-    size_t len1 = strlen(path1);
-    size_t len2 = strlen(path2);
-    size_t sep_len = separator ? strlen(separator) : 0;
-    
-    // 检查是否有足够空间（包括终止符'\0'）
-    if (len1 + sep_len + len2 + 1 > dest_size) {
-        return 0;  // 拼接会溢出
-    }
-    
-    // 执行拼接
-    strcpy(dest, path1);
-    if (separator && sep_len > 0) {
-        strcat(dest, separator);
-    }
-    strcat(dest, path2);
-    return 1;  // 拼接成功
-}
 
-// 检查路径是否在根目录下，防止路径遍历攻击
-static int is_path_safe(const char *path) {
-    char real_root[MAX_PATH];
-    char real_path[MAX_PATH];
-    
-    if (realpath(ROOT_DIR, real_root) == NULL) {
-        perror("realpath");
-        return 0;
-    }
-    
-    if (realpath(path, real_path) == NULL) {
-        return 0;
-    }
-    
-    return strstr(real_path, real_root) == real_path;
-}
-
-// 获取文件大小的字符串表示
-static const char* get_file_size_str(off_t size) {
-    static char str[32];
-    if (size < 1024) {
-        snprintf(str, sizeof(str), "%ld B", (long)size);
-    } else if (size < 1024 * 1024) {
-        snprintf(str, sizeof(str), "%.1f KB", (double)size / 1024);
-    } else if (size < 1024 * 1024 * 1024) {
-        snprintf(str, sizeof(str), "%.1f MB", (double)size / (1024 * 1024));
-    } else {
-        snprintf(str, sizeof(str), "%.1f GB", (double)size / (1024 * 1024 * 1024));
-    }
-    return str;
-}
 
 // 发送HTTP响应头
 static void send_http_header(int client_fd, int status_code, 
@@ -173,7 +124,7 @@ static void send_error_page(int client_fd, int status_code) {
 
 // 发送目录列表页面
 static void send_directory_listing(int client_fd, const char *request_path, 
-                                  const char *full_path) {
+                                  const char *full_path, const HttpServerConfig *http_config) {
     DIR *dir;
     struct dirent *entry;
     char html[BUFFER_SIZE * 4];
@@ -320,7 +271,7 @@ static void send_directory_listing(int client_fd, const char *request_path,
                         "    </div>\n"
                         "</body>\n"
                         "</html>",
-                        HTTP_PORT);
+                        http_config->port);
     
     // 发送响应
     send_http_header(client_fd, 200, "text/html", html_len);
@@ -386,7 +337,7 @@ static void send_file(int client_fd, const char *full_path) {
 }
 
 // 处理客户端请求
-static void handle_client(int client_fd) {
+static void handle_client(int client_fd, const HttpServerConfig *http_config) {
     char buffer[BUFFER_SIZE];
     ssize_t bytes_read = read(client_fd, buffer, BUFFER_SIZE - 1);
     
@@ -415,7 +366,7 @@ static void handle_client(int client_fd) {
     // 构建完整文件系统路径
     char full_path[MAX_PATH];
     if (strcmp(path, "/") == 0) {
-        strncpy(full_path, ROOT_DIR, sizeof(full_path) - 1);
+        strncpy(full_path, http_config->root_dir, sizeof(full_path) - 1);
         full_path[sizeof(full_path) - 1] = '\0';
     } else {
         // URL解码
@@ -432,17 +383,15 @@ static void handle_client(int client_fd) {
             }
         }
         decoded_path[j] = '\0';
-        
         // 安全拼接根目录和解码后的路径
-        if (!safe_path_join(full_path, sizeof(full_path), ROOT_DIR, decoded_path, "")) {
+        if (!safe_path_join(full_path, sizeof(full_path), http_config->root_dir, decoded_path, "")) {
             send_error_page(client_fd, 414); // 请求URL过长
             close(client_fd);
             return;
         }
     }
-    
     // 检查路径安全性
-    if (!is_path_safe(full_path)) {
+    if (!is_path_safe(full_path, http_config->root_dir)) {
         send_error_page(client_fd, 403);
         close(client_fd);
         return;
@@ -458,7 +407,7 @@ static void handle_client(int client_fd) {
     
     // 如果是目录，发送目录列表
     if (S_ISDIR(st.st_mode)) {
-        send_directory_listing(client_fd, path, full_path);
+        send_directory_listing(client_fd, path, full_path, http_config);
     } 
     // 如果是文件，发送文件内容
     else if (S_ISREG(st.st_mode)) {
@@ -473,7 +422,7 @@ static void handle_client(int client_fd) {
 }
 
 // HTTP服务器主函数
-int http_server_main(void) {
+int http_server_main(const HttpServerConfig *http_config) {
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_len = sizeof(client_addr);
     
@@ -494,8 +443,8 @@ int http_server_main(void) {
     // 绑定地址和端口
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(HTTP_PORT);
+    server_addr.sin_addr.s_addr = inet_addr(http_config->ip);
+    server_addr.sin_port = htons(http_config->port);
     
     if (bind(http_server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
         perror("HTTP bind failed");
@@ -510,10 +459,9 @@ int http_server_main(void) {
         return -1;
     }
     
-    printf("HTTP server running on port %d, root directory: %s\n", HTTP_PORT, ROOT_DIR);
-    
+    printf("HTTP server running on port %d, root directory: %s\n", http_config->port, http_config->root_dir);
     // 创建根目录（如果不存在）
-    mkdir(ROOT_DIR, 0755);
+    mkdir(http_config->root_dir, 0755);
     
     // 主循环，接受并处理连接
     while (server_running) {
@@ -540,7 +488,7 @@ int http_server_main(void) {
                ntohs(client_addr.sin_port));
         
         // 处理客户端请求
-        handle_client(client_fd);
+    handle_client(client_fd, http_config);
     }
     
     // 关闭服务器socket
@@ -555,7 +503,11 @@ int http_server_main(void) {
 
 // HTTP服务器线程函数
 void *run_http_server(void *arg) {
-    (void)arg;
-    http_server_main();
+    ThreadData *data = (ThreadData *)arg;
+    if (data == NULL || data->config == NULL) {
+        fprintf(stderr, "HTTP server thread received invalid data\n");
+        return NULL;
+    }
+    http_server_main(&data->config->http);
     return NULL;
 }
