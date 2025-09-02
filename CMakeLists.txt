@@ -12,12 +12,32 @@ else()
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wpedantic -O2")
 endif()
 
+option(USE_DLT_LIB "Use DLT logging library" OFF)
+
 # 定义源文件
-set(SOURCES
-    server.c
-    http_server.c
-    ftp_server.c
-)
+
+if(USE_DLT_LIB)
+    add_definitions(-DUSE_DLT_LIB)
+    set(SOURCES
+        server.c
+        http_server.c
+        ftp_server.c
+        config.c
+        utils.c
+    )
+else()
+    set(SOURCES
+
+        server.c
+        http_server.c
+        ftp_server.c
+        config.c
+        utils.c
+        logMgr.c
+    )
+endif()
+
+
 
 # 定义头文件
 set(HEADERS
@@ -25,6 +45,8 @@ set(HEADERS
     http_server.h
     ftp_server.h
     config.h
+    logMgr.h
+    utils.h
 )
 
 # 添加可执行目标
