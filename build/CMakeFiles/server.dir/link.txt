@@ -1,0 +1,1 @@
+/usr/bin/cc  -Wall -Wextra -Wpedantic -O2 CMakeFiles/server.dir/server.c.o CMakeFiles/server.dir/http_server.c.o CMakeFiles/server.dir/ftp_server.c.o -o server  -lpthread 
